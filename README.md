@@ -1,5 +1,6 @@
 # ♟️ ShahMat
 
+[![PyPI version](https://img.shields.io/pypi/v/shahmat.svg)](https://pypi.org/project/shahmat/)
 [![Python](https://img.shields.io/badge/Python-3.9%2B-blue.svg)](https://www.python.org/)  
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
@@ -24,7 +25,7 @@ The name *ShahMat* comes from the ancient expression that later gave birth to th
 
 ## Quick Start 🚀
 
-Install ShahMat & use the package:
+Install & Use ShahMat:
 ```bash
 pip install ShahMat
 
