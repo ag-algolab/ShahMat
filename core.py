@@ -3,10 +3,10 @@ import numpy as np
 import pandas as pd
 import requests
 from datetime import datetime
-
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
+import re
 
 
 def chesscom(username: str, *, start_year: int = 2025):
@@ -20,6 +20,17 @@ def chesscom(username: str, *, start_year: int = 2025):
         "User-Agent": "AG Algo Lab (website: https://ag-algolab.github.io/)",
         "Accept": "application/json",
     })
+
+
+    def get_first_move_white(pgn: str) -> str:
+        match = re.search(r"\n\n1\.\s*([^\s{]+)", pgn)
+        return match.group(1) if match else None
+
+    def get_first_move_black(pgn: str) -> str:
+        match = re.search(r"]} 1...\s*([^\s{]+)", pgn)
+        return match.group(1) if match else None
+
+
 
     data = []
     for year in range(start_year, this_year + 1):
@@ -47,7 +58,7 @@ def chesscom(username: str, *, start_year: int = 2025):
     df.set_index('date', inplace=True)
     df = df[['time_control', 'time_class', 'rated', 'rules', 'url',
              'white.rating', 'black.rating', 'white.result', 'black.result',
-             'white.username', 'black.username']]
+             'white.username', 'black.username', 'pgn']]
 
     df["user_color"] = np.where(df["white.username"].str.lower() == username.lower(), "white", "black")
     df["user_elo"] = np.where(df["user_color"] == "white", df["white.rating"], df["black.rating"])
@@ -59,18 +70,26 @@ def chesscom(username: str, *, start_year: int = 2025):
     df["result"] = np.where(df["user_color"] == "white", df["white.result"], df["black.result"])
     df['result'] = np.where(df['result'] == 'win', 1, np.where(df['result'].isin(draws), .5, 0))
     df['result_type'] = np.where(df['white.result'] == 'win', df['black.result'], df['white.result'])
+
+    df['first_move_white'] = df['pgn'].apply(get_first_move_white)
+    df['first_move_black'] = df['pgn'].apply(get_first_move_black)
+
+
+
+
     df = df[(df["rated"] == True) & (df["rules"] == "chess")]
     df = df.drop(columns=[
         "white.username", "black.username",
         "white.rating", "black.rating",
         "white.result", "black.result",
-        "rated", "rules"
+        "rated", "rules","pgn"
     ])
-
     # -------------------- State shared by analysis functions --------------------
     df_current = df.copy()
     dfw_current = df_current[df_current['user_color'] == 'white']
     dfb_current = df_current[df_current['user_color'] == 'black']
+
+
 
     def _set_time_class(time_class: str = 'all'):
         nonlocal df_current, dfw_current, dfb_current
@@ -80,6 +99,7 @@ def chesscom(username: str, *, start_year: int = 2025):
             df_current = df[df['time_class'] == time_class].copy()
         dfw_current = df_current[df_current['user_color'] == 'white']
         dfb_current = df_current[df_current['user_color'] == 'black']
+
 
     def _hour_analysis():
         if len(df_current) == 0:
@@ -374,16 +394,111 @@ def chesscom(username: str, *, start_year: int = 2025):
         plt.close(fig)
 
 
+    def _opening_move():
+        acc_w = dfw_current.groupby('first_move_white')['result'].mean()
+        n_w = dfw_current.groupby('first_move_white')['result'].count()
+        acc_w = (acc_w * 100).round(1)
+        df_white = (
+            pd.DataFrame({'accuracy': acc_w, 'n': n_w})
+            .query("n >= 20")
+            .sort_values('n', ascending=False)
+            .head(8)
+        )
+
+        acc_b = dfb_current.groupby('first_move_black')['result'].mean()
+        n_b = dfb_current.groupby('first_move_black')['result'].count()
+        acc_b = (acc_b * 100).round(1)
+        df_black = (
+            pd.DataFrame({'accuracy': acc_b, 'n': n_b})
+            .query("n >= 20")
+            .sort_values('n', ascending=False)
+            .head(8)
+        )
+
+        if df_white.empty and df_black.empty:
+            print("No openings with n >= 20 for white or black.")
+            return
+
+        max_acc = 0
+        if not df_white.empty:
+            max_acc = max(max_acc, df_white['accuracy'].max())
+        if not df_black.empty:
+            max_acc = max(max_acc, df_black['accuracy'].max())
+        max_acc = max_acc * 1.15
+
+        fig, axes = plt.subplots(2, 1, figsize=(10, 8), sharex=True)
+        fig.suptitle("Expected Score by First Move (n ≥ 20)", fontsize=14)
+
+        def plot_opening(df, ax, title, bar_color, text_inside_color):
+            if df.empty:
+                ax.set_visible(False)
+                return
+
+            moves = df.index.tolist()
+            acc = df['accuracy'].values
+            n = df['n'].values
+
+            y_pos = np.arange(len(moves))
+
+            ax.barh(y_pos, acc, color=bar_color)
+
+            ax.set_yticks(y_pos)
+            ax.set_yticklabels(moves)
+            ax.set_xlim(0, max_acc)
+            ax.set_title(title, loc='left')
+
+            # grille verticale légère
+            ax.xaxis.grid(True, linestyle='--', linewidth=0.5)
+            ax.invert_yaxis()  # top = plus joué
+
+            # clean spines
+            ax.spines['top'].set_visible(False)
+            ax.spines['right'].set_visible(False)
+
+            # texte % au milieu + (n) à droite
+            for i, (a, ni) in enumerate(zip(acc, n)):
+                ax.text(a / 2, i, f"{a:.1f}%", ha='center', va='center',
+                        color=text_inside_color, fontsize=9)
+                ax.text(a + max_acc * 0.02, i, f"({ni})", ha='left', va='center',
+                        fontsize=9)
+
+        # White = gris
+        plot_opening(
+            df_white,
+            axes[0],
+            "White – First Move",
+            bar_color="0.6",  # gris
+            text_inside_color="black"  # assez lisible sur gris
+        )
+
+        # Black = noir
+        plot_opening(
+            df_black,
+            axes[1],
+            "Black – First Move",
+            bar_color="black",
+            text_inside_color="white"  # pour contraste sur noir
+        )
+
+        axes[-1].set_xlabel("Accuracy (%)")
+
+        plt.tight_layout(rect=[0, 0, 1, 0.95])
+        plt.show()
+
+
     def _all_def():
         _hour_analysis()
         _elo_diff()
         _result()
         _daily_sessions()
+        _opening_move()
+
 
     def _download():
         export = df_current[['user_color', 'time_class', 'user_elo', 'opponent_elo', 'result', 'result_type', 'url']]
         export.to_csv(f"chesscom_data_{username}.csv", index=True)
         print(f"Saved: chesscom_data_{username}.csv")
+
 
     # ====================== Interactive Menus ======================
     quit_all = False
@@ -402,8 +517,9 @@ def chesscom(username: str, *, start_year: int = 2025):
         print("  2. Games per Day")
         print("  3. Elo Difference")
         print("  4. Result Types Breakdown")
-        print("  5. Complete Analysis")
-        print("  6. Download Data (filtered)")
+        print("  5. Expected Score (%) by First Move")
+        print("  6. Complete Analysis")
+        print("  7. Download Data (filtered)")
         print("  9. Change TimeControl")
         print("  0. Quit")
 
@@ -441,8 +557,9 @@ def chesscom(username: str, *, start_year: int = 2025):
                 "2": _daily_sessions,
                 "3": _elo_diff,
                 "4": _result,
-                "5": _all_def,
-                "6": _download,
+                "5": _opening_move,
+                "6": _all_def,
+                "7": _download,
             }
             if c2 in actions:
                 try:
@@ -456,5 +573,4 @@ def chesscom(username: str, *, start_year: int = 2025):
             break
 
     print('Made by AG Algo Lab: https://ag-algolab.github.io/')
-
 
