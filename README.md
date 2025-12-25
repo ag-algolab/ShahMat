@@ -11,22 +11,11 @@ The name *ShahMat* comes from the ancient expression that later gave birth to th
 
 ---
 
-## Features
-
-- 📥 **Fetch games** directly from Chess.com using a single function
-- 📈 **Analyze performance (through Visualizations)** by:
-  - Hour of the day
-  - Elo difference vs opponents
-  - Color (White / Black)
-  - Result type breakdown (wins, losses, draws)
-- 📊 **Download**: export your data in a csv file
-
----
-
 ## Quick Start 🚀
 
 Install & Use ShahMat:
 ```bash
-pip install ShahMat
+!pip install ShahMat
 
+from ShahMat import chesscom
 chesscom('your_username', start_year=2024)
